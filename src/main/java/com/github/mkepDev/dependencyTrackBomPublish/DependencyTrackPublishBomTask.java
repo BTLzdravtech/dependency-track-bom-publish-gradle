@@ -14,9 +14,19 @@ package com.github.mkepDev.dependencyTrackBomPublish;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import java.security.KeyManagementException;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import javax.net.ssl.SSLContext;
 import org.apache.http.client.HttpResponseException;
+import org.apache.http.client.fluent.Executor;
 import org.apache.http.client.fluent.Request;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.conn.ssl.TrustAllStrategy;
 import org.apache.http.entity.ContentType;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.ssl.SSLContexts;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.tasks.TaskAction;
@@ -152,17 +162,31 @@ public class DependencyTrackPublishBomTask extends DefaultTask {
 
         logger.info("Use new reqex");
 
-        String dtrackUrl = "http://" + host.replaceAll("https?://", "") + "/" + realm;
+        String dtrackUrl = host + "/" + realm;
 
         logger.info("Create request to '{}'...", dtrackUrl);
 
-        Request r = Request.Put(dtrackUrl)
-                .addHeader(HEADER_API_KEY_HEADER_FIELD, apiKey)
-                .bodyString(jsonString, ContentType.APPLICATION_JSON);
+        CloseableHttpClient httpClient = null;
+        try {
+            SSLContext sslContext = SSLContexts.custom()
+              .loadTrustMaterial(null, new TrustAllStrategy())
+              .build();
+            SSLConnectionSocketFactory csf = new SSLConnectionSocketFactory(sslContext);
+            httpClient = HttpClients.custom()
+              .setSSLSocketFactory(csf)
+              .evictExpiredConnections()
+              .build();
+        } catch (NoSuchAlgorithmException | KeyManagementException | KeyStoreException e) {
+            logger.error("SSLContext error: {}", e.getLocalizedMessage());
+        }
+        Executor executor = Executor.newInstance(httpClient);
 
         logger.info("Send request to '{}'...", dtrackUrl);
         try {
-            String returnContent = r.execute().returnContent().asString();
+            String returnContent = executor.execute(Request.Put(dtrackUrl)
+              .addHeader(HEADER_API_KEY_HEADER_FIELD, apiKey)
+              .bodyString(jsonString, ContentType.APPLICATION_JSON))
+            .returnContent().asString();
 
             logger.info("Return content: \n'{}'", returnContent);
         } catch (HttpResponseException e) {
